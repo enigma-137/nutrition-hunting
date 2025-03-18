@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectToDatabase } from '../../../lib/db';
+import { connectToDatabase } from '@/lib/db';
 
 interface Score {
   score: number;
