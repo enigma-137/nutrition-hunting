@@ -21,7 +21,6 @@ export default function Game() {
   const [foodItems, setFoodItems] = useState<FoodItemType[]>([]);
   const [beast, setBeast] = useState<BeastState>({ x: -100, speed: 3 });
   const [score, setScore] = useState<number>(0);
-  const [gameOver, setGameOver] = useState<boolean>(false);
   const [isMounted, setIsMounted] = useState<boolean>(false); // Track client mount
   const [isMobile, setIsMobile] = useState(false);
   const [activeControls, setActiveControls] = useState<{
@@ -38,6 +37,70 @@ export default function Game() {
     fats: number;
     calories: number;
   }>({ protein: 0, carbs: 0, fats: 0, calories: 0 });
+
+  // Function declarations
+  const handleFoodCollection = useCallback((foodType: FoodItemType['type']) => {
+    setScore(prevScore => {
+      let newScore = prevScore;
+      switch (foodType) {
+        case 'protein':
+          newScore += 10;
+          setConsumedItems(prev => ({ ...prev, protein: prev.protein + 1 }));
+          break;
+        case 'carb':
+          newScore -= 5;
+          setConsumedItems(prev => ({ ...prev, carbs: prev.carbs + 1 }));
+          break;
+        case 'fat':
+          newScore += 0;
+          setConsumedItems(prev => ({ ...prev, fats: prev.fats + 1 }));
+          break;
+        case 'sugar':
+          newScore -= 8;
+          setConsumedItems(prev => ({ ...prev, carbs: prev.carbs + 1 }));
+          break;
+      }
+      return newScore;
+    });
+  }, []);
+
+  const checkCollision = useCallback((obj1: HunterState, obj2: FoodItemType): boolean => {
+    return Math.abs(obj1.x - obj2.x) < 50 && Math.abs(obj1.y - obj2.y) < 50;
+  }, []);
+
+  const addRandomFoodItem = useCallback(() => {
+    const generateRandomPosition = (min: number, max: number) => {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    };
+
+    const types = ['protein', 'carb', 'fat', 'sugar'] as const;
+    const randomType = types[Math.floor(Math.random() * types.length)];
+    
+    const effectMap = {
+      'protein': 'muscle',
+      'carb': 'weight',
+      'fat': 'speed',
+      'sugar': 'weight'
+    } as const;
+    
+    const pointsMap = {
+      'protein': 10,
+      'carb': -5,
+      'fat': 0,
+      'sugar': -8
+    } as const;
+    
+    const newItem: FoodItemType = {
+      type: randomType,
+      points: pointsMap[randomType],
+      effect: effectMap[randomType],
+      value: 1,
+      x: generateRandomPosition(0, window.innerWidth - 50),
+      y: generateRandomPosition(0, window.innerHeight - 50)
+    };
+    
+    setFoodItems(prev => [...prev, newItem]);
+  }, []);
 
   // Mark component as mounted on client
   useEffect(() => {
@@ -74,25 +137,6 @@ export default function Game() {
     };
   }, [isMounted, gameState]);
 
-  const checkCollision = useCallback((obj1: HunterState, obj2: FoodItemType): boolean => {
-    return Math.abs(obj1.x - obj2.x) < 50 && Math.abs(obj1.y - obj2.y) < 50;
-  }, []);
-
-  const updateHunterStats = useCallback((food: FoodItemType) => {
-    setHunter((prev) => ({
-      ...prev,
-      speed:
-        food.effect === 'speed'
-          ? prev.speed + food.value
-          : food.effect === 'weight'
-          ? Math.max(2, prev.speed - 2)
-          : prev.speed,
-      weight: food.effect === 'weight' ? prev.weight + food.value : prev.weight,
-      muscle: food.effect === 'muscle' ? prev.muscle + food.value : prev.muscle,
-    }));
-    setScore((prev) => prev + food.points);
-  }, []);
-
   const updateJump = useCallback(() => {
     if (hunter.isJumping || hunter.y > 20) {
       setHunter((prev) => {
@@ -108,14 +152,16 @@ export default function Game() {
         };
       });
     }
-  }, [hunter.isJumping, hunter.y, hunter.jumpVelocity]);
+  }, [hunter.isJumping, hunter.y]);
 
   const updateGame = useCallback(() => {
+    const { x: hunterX, y: hunterY } = hunter;
+    
     // Update beast position
     setBeast((prev) => {
       const newX = prev.x + prev.speed;
       // Check if hunter is jumping over the beast
-      const isJumpingOverBeast = hunter.y > 70 && Math.abs(hunter.x - newX) < 50;
+      const isJumpingOverBeast = hunterY > 70 && Math.abs(hunterX - newX) < 50;
       
       if (isJumpingOverBeast) {
         // Reward for jumping over beast
@@ -128,13 +174,15 @@ export default function Game() {
     // Check food collisions
     foodItems.forEach((food, index) => {
       if (checkCollision(hunter, food)) {
-        updateHunterStats(food);
+        handleFoodCollection(food.type);
         setFoodItems((prev) => prev.filter((_, i) => i !== index));
+        // Add a new food item to replace the collected one
+        addRandomFoodItem();
       }
     });
 
     // Check collision with beast - only if not jumping over beast
-    if (beast.x >= hunter.x - 50 && hunter.y <= 70) {
+    if (beast.x >= hunterX - 50 && hunterY <= 70) {
       if (lives > 1) {
         setLives(prev => prev - 1);
         setBeast(prev => ({ ...prev, x: -100 })); // Reset beast position
@@ -142,7 +190,7 @@ export default function Game() {
         setGameState('gameover');
       }
     }
-  }, [hunter.x, hunter.y, foodItems, beast.x, checkCollision, updateHunterStats, lives]);
+  }, [hunter, foodItems, beast.x, checkCollision, handleFoodCollection, lives, addRandomFoodItem]);
 
   // Game loop
   useEffect(() => {
@@ -150,12 +198,15 @@ export default function Game() {
     
     const gameLoop = setInterval(() => {
       updateGame();
-      spawnFood();
+      // Random chance to spawn food
+      if (Math.random() < 0.02) {
+        addRandomFoodItem();
+      }
       updateJump();
     }, 1000 / 60);
     
     return () => clearInterval(gameLoop);
-  }, [isMounted, gameState, updateGame, updateJump]);
+  }, [isMounted, gameState, updateGame, updateJump, addRandomFoodItem]);
 
   // Continuous movement for mobile
   useEffect(() => {
@@ -222,7 +273,7 @@ export default function Game() {
         jumpVelocity: 15 + prev.muscle / 10 - prev.weight / 20
       }));
     }
-  }, [hunter.isJumping, hunter.muscle, hunter.weight]);
+  }, [hunter.isJumping]);
 
   const handleControlEnd = useCallback((action: 'left' | 'right') => {
     if (action === 'left') {
@@ -231,89 +282,6 @@ export default function Game() {
       setActiveControls(prev => ({ ...prev, right: false }));
     }
   }, []);
-
-  const spawnFood = () => {
-    if (Math.random() < 0.02) {
-      const foodTypes: FoodItemType[] = [
-        { type: 'protein', points: 20, effect: 'muscle', value: 5, x: 0, y: -20 },
-        { type: 'carb', points: 15, effect: 'speed', value: 2, x: 0, y: -20 },
-        { type: 'fat', points: 10, effect: 'weight', value: 5, x: 0, y: -20 },
-        { type: 'sugar', points: 5, effect: 'weight', value: 10, x: 0, y: -20 },
-      ];
-      const food = {
-        ...foodTypes[Math.floor(Math.random() * foodTypes.length)],
-        x: Math.random() * 750,
-      };
-      setFoodItems((prev) => [...prev, food]);
-    }
-  };
-
-  const handleFoodCollection = (foodType: FoodItemType['type']) => {
-    setScore(prevScore => {
-      let newScore = prevScore;
-      switch (foodType) {
-        case 'protein':
-          newScore += 10;
-          setConsumedItems(prev => ({ ...prev, protein: prev.protein + 1 }));
-          break;
-        case 'carb':
-          newScore -= 5;
-          setConsumedItems(prev => ({ ...prev, carbs: prev.carbs + 1 }));
-          break;
-        case 'fat':
-          newScore += 0;
-          setConsumedItems(prev => ({ ...prev, fats: prev.fats + 1 }));
-          break;
-        case 'sugar':
-          newScore -= 8;
-          setConsumedItems(prev => ({ ...prev, carbs: prev.carbs + 1 }));
-          break;
-      }
-      return newScore;
-    });
-  };
-
-  const generateRandomPosition = (min: number, max: number) => {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-  };
-
-  const addRandomFoodItem = () => {
-    const types = ['protein', 'carb', 'fat', 'sugar'] as const;
-    const randomType = types[Math.floor(Math.random() * types.length)];
-    
-    const effectMap = {
-      'protein': 'muscle',
-      'carb': 'weight',
-      'fat': 'speed',
-      'sugar': 'weight'
-    } as const;
-    
-    const pointsMap = {
-      'protein': 10,
-      'carb': -5,
-      'fat': 0,
-      'sugar': -8
-    } as const;
-    
-    const newItem: FoodItemType = {
-      type: randomType,
-      points: pointsMap[randomType],
-      effect: effectMap[randomType],
-      value: 1,
-      x: generateRandomPosition(0, window.innerWidth - 50),
-      y: generateRandomPosition(0, window.innerHeight - 50)
-    };
-    
-    setFoodItems(prev => [...prev, newItem]);
-  };
-
-  const handleCollision = (item: FoodItemType) => {
-    handleFoodCollection(item.type);
-    // Remove the collided food item
-    setFoodItems(prevItems => prevItems.filter(food => food.type !== item.type || food.x !== item.x));
-    // Add a new food item
-    addRandomFoodItem();
-  };
 
   const handlePlayAgain = () => {
     setScore(0);
